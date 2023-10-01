@@ -1,0 +1,434 @@
+ESP 1 Module Code:
+--------------------
+
+#include <ESP8266WiFi.h>
+#include <WiFiClient.h>
+#include <ESP8266WebServer.h>
+#include <EEPROM.h>
+#include <Wire.h>
+#include "HX711.h"
+
+const char* ssid = "ESP1_AccessPoint";
+const char* password = "password123";
+ESP8266WebServer server(80);
+
+const int LOADCELL_DOUT_PIN = 2;
+const int LOADCELL_SCK_PIN = 3;
+HX711 scale;
+
+const int SHAFT_DIAMETER_ADDRESS = 0;
+const int STRAIN_GAUGE_FACTOR_ADDRESS = sizeof(float);
+const int MODULUS_OF_RIGIDITY_ADDRESS = 2 * sizeof(float);
+const int Calibartion_factor_ADDRESS = 3 * sizeof(float);
+
+int r=0;
+float shaftDiameter = 0.0;
+float sgf = 0.0;
+float modulus = 0.0;
+float factor= 0.0;
+int revolutions = 0, rpm=0, k = 0,F= 0;
+long  startTime = 0 ,elapsedTime=0;
+
+unsigned long previousMillis = 0;
+const long interval = 2000;
+
+bool authenticate() {
+  if (!server.authenticate("admin", "adminpassword")) {
+    server.requestAuthentication();
+    return false;
+  }
+  return true;
+}
+
+void writeToEEPROM(int address, float value) {
+  EEPROM.put(address, value);
+  EEPROM.commit();
+}
+
+void readFromEEPROM(int address, float& value) {
+  EEPROM.get(address, value);
+}
+
+//Main Page
+
+void handleRoot() {
+String html = "<html><head>";
+html +="<title>Website</title>";
+html +="<style>";
+html +="* {";
+html +="box-sizing: border-box;";
+html +="}";
+html +="body {";
+html +="margin: 0;";
+html +="padding: 0;";
+html +="font-family: Arial, sans-serif;";
+html +="background-color: #f7f7f7;";
+html +="}";
+html +=".container {";
+html +="max-width: 400px;";
+html +="margin: 80px auto 20px;";
+html +="padding: 20px;";
+html +="background-color: #fff;";
+html +="border-radius: 50px;";
+html +="box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);";
+html +="}";
+html +="h3 {";
+html +="text-align: center;";
+html +="color: #333;";
+html +="}";
+html +="h4 {";
+html +="text-align: center;";
+html +="color: #333;";
+html +="}";
+html +=".input-group {";
+html +="margin-bottom: 6px;";
+html +="}";
+html +=".input-optional-group {";
+html +="margin-bottom: 20px;";
+html +="}";
+html +=".input-label {";
+html +="display: block;";
+html +="margin-bottom: 5px;";
+html +="color: #333;";
+html +="}";
+html +=".input-field {";
+html +="width: 50%;";
+html +="padding: 5px;";
+html +="border: 1px solid #ccc;";
+html +="border-radius: 10px;";
+html +="background-color: #f7f7f7;";
+html +="transition: border-color 0.3s ease;";
+html +="}";
+html +=".input-field:focus {";
+html +="outline: none;";
+html +="border-color: #6ac4d7;";
+html +="}";
+html +=".submit-btn {";
+html +="width: 40%;";
+html +="padding: 5px;";
+html +="background-color: #6ac4d7;";
+html +="border: none;";
+html +="color: #fff;";
+html +="cursor: pointer;";
+html +="border-radius: 25px;";
+html +="transition: background-color 0.3s ease;";
+html +="}";
+html +=".submit-btn:hover {";
+html +="width: 40%;";
+html +="padding: 5px;";
+html +="background-color: #4d9eb1;";
+html +="}";
+html +=".about-section {";
+html +="margin-bottom: 40px;";
+html +="}";
+html +=".about-section h2 {";
+html +="text-align: center;";
+html +="color: #333;";
+html +="}";
+html +=".optional-heading {";
+html +="display: flex;";
+html +="align-items: center;";
+html +="justify-content: center;";
+html +="margin-bottom: 25px;";
+html +="margin-top: 25px;";
+html +="}";
+html +=".optional-heading-line {";
+html +="flex-grow: 1;";
+html +="height: 1px;";
+html +="background-color: #ccc;";
+html +="margin: 0 10px;";
+html +="}";
+html +=".optional-heading-text {";
+html +="color: #333;";
+html +="font-size: 18px;";
+html +="}";
+html +=".optional-head {";
+html +="display: flex;";
+html +="align-items: center;";
+html +="justify-content: center;";
+html +="margin-bottom: 25px;";
+html +="margin-top: 25px;";
+html +="}";
+html +=".optional-head-line {";
+html +="flex-grow: 1;";
+html +="height: 1px;";
+html +="background-color: #ccc;";
+html +="margin: 0 10px;";
+html +="}";
+html +=".optional-head-text {";
+html +="color: #333;";
+html +="font-size: 18px;";
+html +="}";
+html +="</style>";
+html +="</head>";
+html +="<body>";
+html +="<div class='container'>";
+html +="<div class='about-section'>";
+html +="<h3>Wireless System to Determine the Power of Shaft</h3>";
+html +="</div>";
+html += "<div class='optional-head'>";
+html += "<hr class='optional-head-line'>";
+html += "<span class='optional-head-text'>Input Values</span>";
+html += "<hr class='optional-head-line'>";
+html += "</div>";
+html +="<form action='/submit' method='POST'>";
+html +="<div class='input-group'>";
+html +="<label class='input-label' for='shaft_diameter'>Shaft Diameter (mm):</label>";
+html +="<input class='input-field' type='number' id='shaft_diameter' name='shaft_diameter' value='" + String(shaftDiameter) + "'><br><br>";
+html +="</div>";
+html +="<div class='input-group'>";
+html += "<label class='input-label' for='sgf'>Strain Gauge Factor: </label>";
+html += "<input class='input-field' type='number' id='sgf' name='sgf' value='" + String(sgf) + "'><br><br>";
+html +="</div>";
+html +="<div class='input-group'>";
+html += "<label class='input-label' for='modulus'>Modulus of Rigidity: (Gpa)</label>";
+html += "<input class='input-field' type='number' id='modulus' name='modulus' value='" + String(modulus) + "'><br><br>";
+html +="</div>";
+html += "<div style='text-align: center;'>";
+html += "<input type='submit' class='submit-btn' value='Submit'>";
+html += "</div>";
+html += "<div class='optional-heading'>";
+html += "<hr class='optional-heading-line'>";
+html += "<span class='optional-heading-text'>Optional Input Values</span>";
+html += "<hr class='optional-heading-line'>";
+html += "</div>";
+html +="<div class='input-optional-group'>";
+html += "<h4>Zero Calibration</h4>";
+html += "<div style='text-align: center;'>";
+html += "<button type='button' class='submit-btn' onclick='zeroCalibration()'>Zero Calibration</button><br><br>";
+html += "</div>";
+html +="</div>";
+html += "<h4>Calibration</h4>";
+html +="<div class='input-optional-group'>";
+html += "<label for='calibration_factor' class='input-label'>Calibration Factor:</label>";
+html += "<input type='number' class='input-field' id='calibration_factor' name='calibration_factor'><br><br>";
+html += "<div style='text-align: center;'>";
+html += "<button type='button' class='submit-btn' onclick='calibrate()'>Calibrate</button><br><br>";
+html += "</div>";
+html +="</div>";
+html += "</div>";  
+html += "</form>";
+html += "<script>";
+html += "function zeroCalibration() {";
+html += "  fetch('/zero_calibration')";
+html += "    .then(response => {";
+html += "      console.log('Zero calibration performed.');";
+html += "    });";
+html += "}";
+html += "function calibrate() {";
+html += "  var calibrationFactor = document.getElementById('calibration_factor').value;";
+html += "  fetch('/calibrate?factor=' + calibrationFactor)";
+html += "    .then(response => {";
+html += "      console.log('Calibration performed with factor: ' + calibrationFactor);";
+html += "    });";
+html += "}";
+html += "</script>";
+html += "</body></html>";
+  server.send(200, "text/html", html);
+}
+
+//Input Form
+
+void handleSubmit() {
+  if (!authenticate()) return;
+  shaftDiameter = server.arg("shaft_diameter").toFloat();
+  sgf = server.arg("sgf").toFloat();
+  modulus = server.arg("modulus").toFloat();
+  Serial.print("Shaft Diameter: ");
+  Serial.print(shaftDiameter);
+  Serial.print("\t Strain gauge factor: ");
+  Serial.print(sgf);
+  Serial.print("\t Modulus og Rigidity: ");
+  Serial.println(modulus);
+  
+  writeToEEPROM(SHAFT_DIAMETER_ADDRESS, shaftDiameter);
+  writeToEEPROM(STRAIN_GAUGE_FACTOR_ADDRESS, sgf);
+  writeToEEPROM(MODULUS_OF_RIGIDITY_ADDRESS, modulus);
+  
+  String response = "Submitted values:<br>";
+  response += "Shaft Diameter: " + String(shaftDiameter) + "<br>";
+  response += "Strain Gauge Factor: " + String(sgf) + "<br>";
+  response += "Modulus of Rigidity: " + String(modulus) + "<br>";
+  server.send(200, "text/html", response);
+}
+
+// HX711 zero Calibarion
+
+void handleZeroCalibration() {
+  if (!authenticate()) return;
+  scale.tare();  
+  Serial.println("Zero Calibration Done");
+  server.send(200, "text/plain", "Zero calibration performed.");
+}
+
+//HX711 Calibration
+
+void handleCalibrate() {
+  if (!authenticate()) return;  
+  if (server.hasArg("factor")) {
+    String calibrationFactor = server.arg("factor");
+    float factor = calibrationFactor.toFloat();
+    writeToEEPROM(Calibartion_factor_ADDRESS, factor);
+    scale.set_scale(factor);  
+    Serial.println("Calibration Done");
+    server.send(200, "text/plain", "Calibration performed with factor: " + calibrationFactor);
+  } else {
+    server.send(400, "text/plain", "Calibration factor not provided.");
+  }
+}
+
+//Starin Measurement
+
+String readStrain() {
+  if (scale.is_ready()) {
+    float reading=(scale.get_units(10));
+    Serial.print("HX711 reading: ");
+   Serial.println(reading);
+    return String(reading);
+  } else {
+    return String("HX711 not found.");
+  } 
+}
+
+//ISR Service
+
+void ICACHE_RAM_ATTR isr() {
+  revolutions++;
+  // Serial.println(revolutions);
+}
+
+//RPM measurement
+
+String readRPMFromSensor() {
+  revolutions = 0; 
+  rpm = 0;
+  startTime = millis();
+  attachInterrupt(D6, isr, FALLING);
+  delay(2000);
+  detachInterrupt(D6);
+  if (revolutions > 0)
+  {
+    elapsedTime = millis() - startTime;
+    rpm = (revolutions * 60000) / elapsedTime;      //calculates rpm
+    Serial.print(revolutions );
+    //rpm=((int)rpm_1) +1;
+  }
+  String outMsg = String("RPM :") + rpm;
+  Serial.print("\t");
+  Serial.print(elapsedTime);
+  Serial.print("\t");
+  Serial.println(outMsg);
+  return String(rpm);
+}
+
+//OutPut Page
+
+void handleOutput() {
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+    server.sendHeader("Refresh", "5");
+    float strain = readStrain().toFloat();
+    float torque = (0.0490873852 * modulus * pow(shaftDiameter, 4) * strain) / sgf;
+    float rpm = readRPMFromSensor().toInt(); 
+    float power = 0.1047197551 * rpm * torque;
+ 
+    String html = "<html><head>";
+    html += "<style>";
+    html +=".container {";
+    html +="max-width: 200px;";
+    html +="margin: 80px auto 20px;";
+    html +="padding: 40px;";
+    html +="background-color: #fff;";
+    html +="border-radius: 50px;";
+    html +="box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);";
+    html +="}";
+    html += "h2 {";
+    html += "text-align: center;"; 
+    html += "color: #333;";
+    html += "}";
+    html +=".output-section {";
+    html +="margin-bottom: 40px;";
+    html +="}";
+    html +=".output-section {";
+    html +="color: #333;";
+    html +="}";
+    html +=".output-values {";
+    html +="margin-top: 20px;";
+    html +="}";
+    html +=".output-label {";
+    html +="display: block;";
+    html +="margin-bottom: 5px;";
+    html +="color: #333;";
+    html +="}";
+    html +=".output-field {";
+    html +="width: 50%;";
+    html +="padding: 10px;";
+    html +="border: 1px solid #ccc;";
+    html +="border-radius: 10px;";
+    html +="background-color: #f7f7f7;";
+    html +="transition: border-color 0.3s ease;";
+    html +="}";
+    html += "</style>";
+    html += "</head>";
+    html += "<body>";
+    html += "<div class='container'>";
+    html += "<h2>Output Values</h2>";
+    html +="<div class='output-values' text-align:'center'>";
+    html += "<label class='output-label' for='torque'>Torque (Nm):</label><br>";
+    html += "<span class='output-field'>" + String(torque) + "</span><br>";
+    html +="</div>";
+    html +="<div class='output-values' text-align:'center'>";
+    html += "<label class='output-label' for='strain'>Strain (Pa):</label><br>";
+    html += "<span class='output-field'>" + String(strain) + "</span><br>";
+    html +="</div>";
+    html +="<div class='output-values' text-align:'center'>";
+    html += "<label class='output-label' for='rpm'>Speed (rpm):</label><br>";
+    html += "<span class='output-field'>" + String(rpm) + "</span><br>";
+    html +="</div>";
+    html +="<div class='output-values' text-align:'center'>";
+    html += "<label class='output-label' for='power'>Power (w):</label><br>";
+    html += "<span class='output-field'>" + String(power) + "</span><br>";
+    html +="</div>";
+    html +="</div>";
+    html += "</body></html>";
+   server.send(200, "text/html", html);
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  WiFi.softAP(ssid, password);
+  IPAddress apIP = WiFi.softAPIP();
+  Serial.print("Access Point IP address: ");
+  Serial.println(apIP);
+  EEPROM.begin(512);
+  readFromEEPROM(SHAFT_DIAMETER_ADDRESS, shaftDiameter);
+  readFromEEPROM(STRAIN_GAUGE_FACTOR_ADDRESS, sgf);
+  readFromEEPROM(MODULUS_OF_RIGIDITY_ADDRESS, modulus);
+  readFromEEPROM(Calibartion_factor_ADDRESS, factor);
+  
+  Serial.print("Factor:");
+  Serial.println(factor);
+  scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
+  scale.set_scale(factor);
+  Serial.println("Calibration done");
+  
+  server.on("/", handleRoot);
+  server.on("/submit", handleSubmit);
+  server.on("/zero_calibration", handleZeroCalibration);
+  server.on("/calibrate", handleCalibrate);
+  server.on("/output", handleOutput);
+  server.on("/Strain",HTTP_GET, []() {
+  server.send(200, "text/plain", readStrain());
+  });
+  server.on("/RPM",HTTP_GET, []() {
+  server.send(200, "text/plain",readRPMFromSensor());
+  });  
+  server.begin();
+  Serial.println("HTTP server started");
+}
+
+void loop() {
+  server.handleClient();
+}
