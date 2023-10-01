@@ -1,0 +1,116 @@
+ESP 2 Module Code:
+----------------------
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClient.h>
+#include <ESP8266WebServer.h>
+#include <sdcard>
+
+#include <ESP8266WiFiMulti.h>
+ESP8266WiFiMulti WiFiMulti;
+
+const char* ssid = "ESP8266-Access-Point";
+const char* password = "123456789";
+
+ESP8266WebServer server(80);
+
+//Your IP address or domain name with URL path
+const char* serverNameStrain = "http://192.168.4.1/Strain";
+const char* serverNameRPM = "http://192.168.4.1/RPM";
+const char* serverNameVoltage = "http://192.168.4.1/Voltage";
+
+#include <Wire.h>
+
+String Strain;
+String RPM;
+String Voltage;
+
+unsigned long previousMillis = 0;
+const long interval = 10; 
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("Connected to WiFi");
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+  
+  if(currentMillis - previousMillis >= interval) {
+     // Check WiFi connection status
+    if ((WiFiMulti.run() == WL_CONNECTED)) {
+      Strain = httpGETRequest(serverNameStrain);
+      Voltage = httpGETRequest(serverNameVoltage);
+      RPM = httpGETRequest(serverNameRPM);
+      //Serial.println("Strain: " + Strain + " *C - RPM: " + RPM + " % - Voltage: " + Voltage + " hPa");
+      
+      // display Strain
+      Serial.print("Strain: ");
+      Serial.print((Strain.toFloat()),3);
+      
+      // display RPM
+
+      Serial.print("\tRPM: ");
+      Serial.print(RPM);
+      
+      // display Voltage
+      Serial.print("\tVoltage:");
+      Serial.print(Voltage);
+      Serial.print("V");
+      
+      // display Power
+      float power=((2*3.14*RPM.toInt()*Strain.toInt())/60); 
+      Serial.print("\tPower:");
+      Serial.print(power);
+      Serial.println("W");
+      // save the last HTTP GET Request
+      previousMillis = currentMillis;
+    }
+    else {
+      Serial.println("WiFi Disconnected");
+      WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("Connected to WiFi");
+    }
+  }
+}
+
+String httpGETRequest(const char* serverName) {
+  WiFiClient client;
+  HTTPClient http;
+    
+  // Your IP address with path or Domain name with URL path 
+  http.begin(client, serverName);
+  
+  // Send HTTP POST request
+  int httpResponseCode = http.GET();
+  
+  String payload = "--"; 
+  
+  if (httpResponseCode>0) {
+    //Serial.print("HTTP Response code: ");
+    //Serial.println(httpResponseCode);
+    payload = http.getString();
+  }
+  else {
+    //Serial.print("Error code: ");
+    //Serial.println(httpResponseCode);
+  }
+  // Free resources
+  http.end();
+
+  return payload;
+}
